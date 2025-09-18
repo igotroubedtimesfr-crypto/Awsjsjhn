@@ -1,0 +1,375 @@
+-- AntiLag_Full_Unified_Mobile_UltraEnhanced.lua
+-- =========================================
+-- SERVER FUNCTIONS (ServerScriptService)
+-- =========================================
+if game:GetService("RunService"):IsServer() then
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local RunService = game:GetService("RunService")
+    local HttpService = game:GetService("HttpService")
+
+    -- Configurações ajustáveis
+    local CONFIG = {
+        MAX_PARTS = 80,               -- Limite de partes por jogador (reduzido para mais rigor)
+        MAX_MODELS = 25,             -- Limite de modelos por jogador
+        MAX_PARTICLES = 30,          -- Limite de partículas por jogador
+        MAX_SOUNDS = 10,             -- Limite de sons por jogador
+        MAX_CONSTRAINTS = 15,        -- Limite de constraints por jogador
+        MAX_EXPLOSIONS = 3,          -- Limite de explosões por jogador
+        MAX_BODY_MOVERS = 8,         -- Limite de BodyMovers
+        MAX_REMOTE_CALLS = 50,       -- Limite de chamadas remotas por segundo
+        RATE_LIMIT_INTERVAL = 0.3,   -- Intervalo para limite de taxa (mais rápido)
+        PHYSICS_CHECK_INTERVAL = 0.5,-- Intervalo para verificar física (mais frequente)
+        CLEANUP_ENABLED = true,
+        KICK_ON_VIOLATION = true,
+        WARNING_THRESHOLD = 2,       -- Menos avisos antes de kick (mais agressivo)
+        LOG_VIOLATIONS = true,
+        BAN_ENABLED = false,
+        PHYSICS_THRESHOLD = 300,     -- Limite de partes com física
+        MAX_TOUCH_INTERESTS = 30,
+        MAX_WORKSPACE_PARTS = 500    -- Limite total de parts no workspace para detectar "monte de blocos"
+    }
+
+    local playerData = {}
+    local rateLimitData = {}
+
+    local function ensurePlayerData(player)
+        if not playerData[player] then
+            playerData[player] = {
+                parts = {}, models = {}, particles = {}, sounds = {}, constraints = {},
+                explosions = {}, bodyMovers = {}, touchInterests = {}, remoteCalls = 0,
+                warnings = 0, lastViolation = 0, physicsParts = 0
+            }
+        end
+        return playerData[player]
+    end
+
+    local function logViolation(player, reason)
+        if CONFIG.LOG_VIOLATIONS then
+            warn(string.format("[Anti-Lag] Violation [Player: %s, Reason: %s, Time: %s]", 
+                player.Name, reason, os.date("%Y-%m-%d %H:%M:%S")))
+        end
+    end
+
+    local function checkRateLimit(player, objType)
+        if not rateLimitData[player] then
+            rateLimitData[player] = { lastReset = tick(), counts = {} }
+        end
+        local data = rateLimitData[player]
+        if tick() - data.lastReset >= CONFIG.RATE_LIMIT_INTERVAL then
+            data.counts = {}
+            data.lastReset = tick()
+        end
+        data.counts[objType] = (data.counts[objType] or 0) + 1
+        if data.counts[objType] > math.floor(CONFIG.MAX_PARTS / 4) then  -- Mais agressivo
+            logViolation(player, "Rate limit exceeded for " .. objType)
+            return false
+        end
+        return true
+    end
+
+    local function applyBan(player)
+        if CONFIG.BAN_ENABLED then
+            warn(string.format("[Anti-Lag] Ban requested for %s", player.Name))
+        end
+        player:Kick("Exploit detectado: comportamento malicioso repetido")
+    end
+
+    -- Função para remover monte de blocos
+    local function cleanExcessBlocks()
+        local parts = Workspace:GetDescendants()
+        local partCount = 0
+        for _, obj in ipairs(parts) do
+            if obj:IsA("BasePart") and not obj:IsDescendantOf(Players.LocalPlayer.Character) then  -- Evitar personagem
+                partCount += 1
+                if partCount > CONFIG.MAX_WORKSPACE_PARTS then
+                    pcall(function() obj:Destroy() end)
+                end
+            end
+        end
+        if partCount > CONFIG.MAX_WORKSPACE_PARTS then
+            logViolation(nil, "Excess blocks in workspace cleaned")
+        end
+    end
+
+    Workspace.DescendantAdded:Connect(function(obj)
+        local creator = obj:FindFirstChild("creator")
+        local player = creator and creator.Value and creator.Value:IsA("Player") and creator.Value or nil
+        if not player then
+            pcall(function() obj:Destroy() end)
+            return
+        end
+
+        local data = ensurePlayerData(player)
+        if not checkRateLimit(player, obj.ClassName) then
+            pcall(function() obj:Destroy() end)
+            data.warnings += 1
+            if CONFIG.KICK_ON_VIOLATION and data.warnings >= CONFIG.WARNING_THRESHOLD then
+                applyBan(player)
+            end
+            return
+        end
+
+        local function handleObject(objType, maxCount, storage)
+            table.insert(storage, obj)
+            if #storage > maxCount then
+                if CONFIG.CLEANUP_ENABLED then
+                    for _, item in ipairs(storage) do pcall(function() item:Destroy() end) end
+                    storage = {}
+                end
+                data.warnings += 1
+                logViolation(player, "Limit exceeded for " .. objType)
+                if CONFIG.KICK_ON_VIOLATION and data.warnings >= CONFIG.WARNING_THRESHOLD then
+                    applyBan(player)
+                end
+            end
+        end
+
+        if obj:IsA("BasePart") then
+            handleObject("parts", CONFIG.MAX_PARTS, data.parts)
+            if not obj.Anchored and not obj:IsDescendantOf(player.Character) then  -- Evitar ancorar personagem
+                data.physicsParts += 1
+            end
+        elseif obj:IsA("Model") then
+            handleObject("models", CONFIG.MAX_MODELS, data.models)
+        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+            handleObject("particles", CONFIG.MAX_PARTICLES, data.particles)
+        elseif obj:IsA("Sound") then
+            handleObject("sounds", CONFIG.MAX_SOUNDS, data.sounds)
+        elseif obj:IsA("Weld") or obj:IsA("Motor6D") or obj:IsA("HingeConstraint") then
+            handleObject("constraints", CONFIG.MAX_CONSTRAINTS, data.constraints)
+        elseif obj:IsA("Explosion") then
+            handleObject("explosions", CONFIG.MAX_EXPLOSIONS, data.explosions)
+        elseif obj:IsA("BodyVelocity") or obj:IsA("BodyAngularVelocity") or obj:IsA("BodyPosition") then
+            handleObject("bodyMovers", CONFIG.MAX_BODY_MOVERS, data.bodyMovers)
+        elseif obj:IsA("TouchTransmitter") then
+            handleObject("touchInterests", CONFIG.MAX_TOUCH_INTERESTS, data.touchInterests)
+        end
+    end)
+
+    -- Monitoramento de física e blocos excessivos
+    local lastPhysicsCheck = 0
+    RunService.Heartbeat:Connect(function()
+        if tick() - lastPhysicsCheck < CONFIG.PHYSICS_CHECK_INTERVAL then return end
+        lastPhysicsCheck = tick()
+
+        for player, data in pairs(playerData) do
+            data.remoteCalls = 0
+            if data.physicsParts > CONFIG.PHYSICS_THRESHOLD then
+                for _, part in ipairs(data.parts) do
+                    pcall(function()
+                        if not part.Anchored and not part:IsDescendantOf(player.Character) then
+                            part.Velocity = Vector3.new(0, 0, 0)
+                            part.RotVelocity = Vector3.new(0, 0, 0)
+                            part.Anchored = true
+                        end
+                    end)
+                end
+                data.physicsParts = 0
+                data.warnings += 1
+                logViolation(player, "Excessive physics objects detected")
+                if CONFIG.KICK_ON_VIOLATION and data.warnings >= CONFIG.WARNING_THRESHOLD then
+                    applyBan(player)
+                end
+            end
+        end
+
+        -- Verificar monte de blocos no workspace
+        local totalParts = #Workspace:GetDescendants(function(desc) return desc:IsA("BasePart") end)
+        if totalParts > CONFIG.MAX_WORKSPACE_PARTS then
+            cleanExcessBlocks()
+        end
+    end)
+
+    local function monitorRemote(remote, player)
+        local data = ensurePlayerData(player)
+        remote.OnServerEvent:Connect(function(plr, ...)
+            if plr ~= player then return end
+            data.remoteCalls += 1
+            if data.remoteCalls > CONFIG.MAX_REMOTE_CALLS then
+                data.warnings += 1
+                logViolation(player, "Excessive RemoteEvent calls")
+                if CONFIG.KICK_ON_VIOLATION and data.warnings >= CONFIG.WARNING_THRESHOLD then
+                    applyBan(player)
+                end
+            end
+        end)
+    end
+
+    Players.PlayerRemoving:Connect(function(plr)
+        playerData[plr] = nil
+        rateLimitData[plr] = nil
+    end)
+end
+
+-- =========================================
+-- CLIENT FUNCTIONS (StarterPlayerScripts)
+-- =========================================
+if game:GetService("RunService"):IsClient() then
+    local RunService = game:GetService("RunService")
+    local Workspace = game:GetService("Workspace")
+    local Players = game:GetService("Players")
+    local player = Players.LocalPlayer
+    local playerGui = player:WaitForChild("PlayerGui")
+    local character = player.Character or player.CharacterAdded:Wait()
+
+    -- Configurações ajustáveis
+    local CONFIG = {
+        FPS_THRESHOLD = 50,           -- Aumentado para mirar em FPS mais alto (Roblox cap 60)
+        CLEAN_INTERVAL = 0.03,       -- Mais frequente para limpeza rápida
+        MAX_PARTICLES = 20,          -- Reduzido para mais FPS
+        MAX_SOUNDS = 8,
+        MAX_GUIS = 10,
+        MAX_CONSTRAINTS = 15,
+        MAX_EXPLOSIONS = 3,
+        PHYSICS_THRESHOLD = 200,
+        ANTI_LAG_ENABLED = true,
+        MEMORY_THRESHOLD = 800,      -- Limite de memória em KB (aprox)
+        MAX_WORKSPACE_PARTS = 400    -- Limite para "monte de blocos"
+    }
+
+    -- GUI de controle
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "AntiLagGUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.IgnoreGuiInset = true
+    screenGui.Parent = playerGui
+
+    local textLabel = Instance.new("TextLabel")
+    textLabel.Size = UDim2.new(0, 300, 0, 50)
+    textLabel.Position = UDim2.new(0.5, -150, 0.05, 0)
+    textLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    textLabel.BackgroundTransparency = 0.5
+    textLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+    textLabel.TextScaled = true
+    textLabel.Text = ""
+    textLabel.Visible = false
+    textLabel.Parent = screenGui
+
+    local toggleButton = Instance.new("TextButton")
+    toggleButton.Size = UDim2.new(0, 150, 0, 50)
+    toggleButton.Position = UDim2.new(0.5, -75, 0.12, 0)
+    toggleButton.BackgroundColor3 = Color3.fromRGB(0, 150, 0)
+    toggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleButton.TextScaled = true
+    toggleButton.Text = "Anti-Lag: ON"
+    toggleButton.Parent = screenGui
+
+    toggleButton.MouseButton1Click:Connect(function()
+        CONFIG.ANTI_LAG_ENABLED = not CONFIG.ANTI_LAG_ENABLED
+        toggleButton.BackgroundColor3 = CONFIG.ANTI_LAG_ENABLED and Color3.fromRGB(0, 150, 0) or Color3.fromRGB(150, 0, 0)
+        toggleButton.Text = "Anti-Lag: " .. (CONFIG.ANTI_LAG_ENABLED and "ON" or "OFF")
+        if CONFIG.ANTI_LAG_ENABLED then
+            cleanLag()  -- Limpeza imediata ao ativar
+            cleanExcessBlocks()  -- Remover monte de blocos ao ativar
+        end
+    end)
+
+    local function showNotification(message)
+        textLabel.Text = message
+        textLabel.Visible = true
+        task.delay(2, function() textLabel.Visible = false end)
+    end
+
+    -- Função para remover monte de blocos
+    local function cleanExcessBlocks()
+        local partCount = 0
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and not obj:IsDescendantOf(character) then
+                partCount += 1
+                if partCount > CONFIG.MAX_WORKSPACE_PARTS then
+                    pcall(function() obj:Destroy() end)
+                end
+            end
+        end
+        if partCount > CONFIG.MAX_WORKSPACE_PARTS then
+            showNotification("Anti-Lag: Removendo monte de blocos!")
+        end
+    end
+
+    local function cleanLag()
+        if not CONFIG.ANTI_LAG_ENABLED then return end
+        local particleCount, soundCount, guiCount, constraintCount, explosionCount, physicsCount = 0, 0, 0, 0, 0, 0
+        for _, obj in ipairs(Workspace:GetDescendants()) do
+            pcall(function()
+                if obj:IsDescendantOf(character) then return end  -- Proteção ao personagem
+                if obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+                    particleCount += 1
+                    if particleCount > CONFIG.MAX_PARTICLES then
+                        obj.Enabled = false
+                    end
+                elseif obj:IsA("Sound") then
+                    soundCount += 1
+                    if soundCount > CONFIG.MAX_SOUNDS then
+                        obj:Stop()
+                    end
+                elseif obj:IsA("ScreenGui") or obj:IsA("Frame") or obj:IsA("TextLabel") then
+                    guiCount += 1
+                    if guiCount > CONFIG.MAX_GUIS and obj.Parent == playerGui and obj ~= screenGui then
+                        obj:Destroy()
+                    end
+                elseif obj:IsA("Weld") or obj:IsA("Motor6D") or obj:IsA("HingeConstraint") then
+                    constraintCount += 1
+                    if constraintCount > CONFIG.MAX_CONSTRAINTS then
+                        obj:Destroy()
+                    end
+                elseif obj:IsA("Explosion") then
+                    explosionCount += 1
+                    if explosionCount > CONFIG.MAX_EXPLOSIONS then
+                        obj:Destroy()
+                    end
+                elseif obj:IsA("BasePart") and not obj.Anchored then
+                    physicsCount += 1
+                    if physicsCount > CONFIG.PHYSICS_THRESHOLD then
+                        obj.Velocity = Vector3.new(0, 0, 0)
+                        obj.RotVelocity = Vector3.new(0, 0, 0)
+                        obj.Anchored = true
+                    end
+                elseif obj:IsA("BodyVelocity") or obj:IsA("BodyAngularVelocity") or obj:IsA("BodyPosition") then
+                    obj:Destroy()
+                end
+            end)
+        end
+        if particleCount > CONFIG.MAX_PARTICLES or soundCount > CONFIG.MAX_SOUNDS or guiCount > CONFIG.MAX_GUIS or constraintCount > CONFIG.MAX_CONSTRAINTS or explosionCount > CONFIG.MAX_EXPLOSIONS then
+            showNotification("Anti-Lag: Limpando objetos excessivos!")
+        end
+        cleanExcessBlocks()  -- Sempre remover blocos excessivos durante limpeza
+    end
+
+    -- Monitoramento de memória e otimização para FPS
+    local function checkMemoryUsage()
+        local memory = collectgarbage("count")
+        if memory > CONFIG.MEMORY_THRESHOLD then
+            collectgarbage("collect")
+            showNotification("Anti-Lag: Otimizando memória para mais FPS!")
+        end
+    end
+
+    local lastClean = 0
+    local fpsHistory = {}
+    local FPS_SMOOTHING = 15  -- Mais amostras para FPS suave
+    RunService.Heartbeat:Connect(function(dt)
+        if not CONFIG.ANTI_LAG_ENABLED then return end
+        if tick() - lastClean < CONFIG.CLEAN_INTERVAL then return end
+
+        -- Calcular FPS suavizado
+        table.insert(fpsHistory, 1 / dt)
+        if #fpsHistory > FPS_SMOOTHING then
+            table.remove(fpsHistory)
+        end
+        local avgFps = 0
+        for _, fps in ipairs(fpsHistory) do
+            avgFps += fps
+        end
+        avgFps = avgFps / #fpsHistory
+
+        if avgFps < CONFIG.FPS_THRESHOLD then
+            cleanLag()
+            checkMemoryUsage()
+            lastClean = tick()
+        end
+    end)
+
+    -- Otimização inicial para FPS alto
+    Workspace.PhysicsSteppingMethod = Enum.PhysicsSteppingMethod.Fixed  -- Para simulação de física mais eficiente (até 240Hz se configurado no Studio)
+end
