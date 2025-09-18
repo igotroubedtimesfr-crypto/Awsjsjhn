@@ -1,0 +1,168 @@
+export default function handler(req, res) {
+    const ua = req.headers['user-agent'] || "";
+
+    // Só responde se for Roblox
+    if (ua.includes("Roblox")) {
+        res.setHeader("Content-Type", "text/plain");
+
+        // Código Lua do Anti-Lag
+        res.send(`-- AntiLag_Full_Unified_Mobile_UltraEnhanced.lua
+-- =========================================
+-- SERVER FUNCTIONS (ServerScriptService)
+-- =========================================
+if game:GetService("RunService"):IsServer() then
+    local Players = game:GetService("Players")
+    local Workspace = game:GetService("Workspace")
+    local RunService = game:GetService("RunService")
+    local HttpService = game:GetService("HttpService")
+
+    -- Configurações ajustáveis
+    local CONFIG = {
+        MAX_PARTS = 80,
+        MAX_MODELS = 25,
+        MAX_PARTICLES = 30,
+        MAX_SOUNDS = 10,
+        MAX_CONSTRAINTS = 15,
+        MAX_EXPLOSIONS = 3,
+        MAX_BODY_MOVERS = 8,
+        MAX_REMOTE_CALLS = 50,
+        RATE_LIMIT_INTERVAL = 0.3,
+        PHYSICS_CHECK_INTERVAL = 0.5,
+        CLEANUP_ENABLED = true,
+        KICK_ON_VIOLATION = true,
+        WARNING_THRESHOLD = 2,
+        LOG_VIOLATIONS = true,
+        BAN_ENABLED = false,
+        PHYSICS_THRESHOLD = 300,
+        MAX_TOUCH_INTERESTS = 30,
+        MAX_WORKSPACE_PARTS = 500
+    }
+
+    local playerData = {}
+    local rateLimitData = {}
+
+    local function ensurePlayerData(player)
+        if not playerData[player] then
+            playerData[player] = {
+                parts = {}, models = {}, particles = {}, sounds = {}, constraints = {},
+                explosions = {}, bodyMovers = {}, touchInterests = {}, remoteCalls = 0,
+                warnings = 0, lastViolation = 0, physicsParts = 0
+            }
+        end
+        return playerData[player]
+    end
+
+    local function logViolation(player, reason)
+        if CONFIG.LOG_VIOLATIONS then
+            warn(string.format("[Anti-Lag] Violation [Player: %s, Reason: %s, Time: %s]", 
+                player.Name, reason, os.date("%Y-%m-%d %H:%M:%S")))
+        end
+    end
+
+    local function checkRateLimit(player, objType)
+        if not rateLimitData[player] then
+            rateLimitData[player] = { lastReset = tick(), counts = {} }
+        end
+        local data = rateLimitData[player]
+        if tick() - data.lastReset >= CONFIG.RATE_LIMIT_INTERVAL then
+            data.counts = {}
+            data.lastReset = tick()
+        end
+        data.counts[objType] = (data.counts[objType] or 0) + 1
+        if data.counts[objType] > math.floor(CONFIG.MAX_PARTS / 4) then
+            logViolation(player, "Rate limit exceeded for " .. objType)
+            return false
+        end
+        return true
+    end
+
+    local function applyBan(player)
+        if CONFIG.BAN_ENABLED then
+            warn(string.format("[Anti-Lag] Ban requested for %s", player.Name))
+        end
+        player:Kick("Exploit detectado: comportamento malicioso repetido")
+    end
+
+    -- Função para remover monte de blocos
+    local function cleanExcessBlocks()
+        local parts = Workspace:GetDescendants()
+        local partCount = 0
+        for _, obj in ipairs(parts) do
+            if obj:IsA("BasePart") and not obj:IsDescendantOf(Players.LocalPlayer.Character) then
+                partCount += 1
+                if partCount > CONFIG.MAX_WORKSPACE_PARTS then
+                    pcall(function() obj:Destroy() end)
+                end
+            end
+        end
+        if partCount > CONFIG.MAX_WORKSPACE_PARTS then
+            logViolation(nil, "Excess blocks in workspace cleaned")
+        end
+    end
+
+    Workspace.DescendantAdded:Connect(function(obj)
+        local creator = obj:FindFirstChild("creator")
+        local player = creator and creator.Value and creator.Value:IsA("Player") and creator.Value or nil
+        if not player then
+            pcall(function() obj:Destroy() end)
+            return
+        end
+
+        local data = ensurePlayerData(player)
+        if not checkRateLimit(player, obj.ClassName) then
+            pcall(function() obj:Destroy() end)
+            data.warnings += 1
+            if CONFIG.KICK_ON_VIOLATION and data.warnings >= CONFIG.WARNING_THRESHOLD then
+                applyBan(player)
+            end
+            return
+        end
+
+        local function handleObject(objType, maxCount, storage)
+            table.insert(storage, obj)
+            if #storage > maxCount then
+                if CONFIG.CLEANUP_ENABLED then
+                    for _, item in ipairs(storage) do pcall(function() item:Destroy() end) end
+                    storage = {}
+                end
+                data.warnings += 1
+                logViolation(player, "Limit exceeded for " .. objType)
+                if CONFIG.KICK_ON_VIOLATION and data.warnings >= CONFIG.WARNING_THRESHOLD then
+                    applyBan(player)
+                end
+            end
+        end
+
+        if obj:IsA("BasePart") then
+            handleObject("parts", CONFIG.MAX_PARTS, data.parts)
+            if not obj.Anchored and not obj:IsDescendantOf(player.Character) then
+                data.physicsParts += 1
+            end
+        elseif obj:IsA("Model") then
+            handleObject("models", CONFIG.MAX_MODELS, data.models)
+        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+            handleObject("particles", CONFIG.MAX_PARTICLES, data.particles)
+        elseif obj:IsA("Sound") then
+            handleObject("sounds", CONFIG.MAX_SOUNDS, data.sounds)
+        elseif obj:IsA("Weld") or obj:IsA("Motor6D") or obj:IsA("HingeConstraint") then
+            handleObject("constraints", CONFIG.MAX_CONSTRAINTS, data.constraints)
+        elseif obj:IsA("Explosion") then
+            handleObject("explosions", CONFIG.MAX_EXPLOSIONS, data.explosions)
+        elseif obj:IsA("BodyVelocity") or obj:IsA("BodyAngularVelocity") or obj:IsA("BodyPosition") then
+            handleObject("bodyMovers", CONFIG.MAX_BODY_MOVERS, data.bodyMovers)
+        elseif obj:IsA("TouchTransmitter") then
+            handleObject("touchInterests", CONFIG.MAX_TOUCH_INTERESTS, data.touchInterests)
+        end
+    end)
+
+    -- Resto do código continua igual...
+end
+
+-- CLIENT FUNCTIONS (StarterPlayerScripts) ...
+-- (Cole o restante do código Lua aqui, mantendo tudo dentro do res.send)
+`);
+    } else {
+        // Bloqueia qualquer outro acesso
+        res.status(404).send("Not Found");
+    }
+}
