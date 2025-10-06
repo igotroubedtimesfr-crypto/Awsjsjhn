@@ -1,0 +1,691 @@
+local repo = 'https://raw.githubusercontent.com/LionTheGreatRealFrFr/MobileLinoriaLib/main/'
+
+local Library = loadstring(game:HttpGet(repo .. 'Library.lua'))()
+local ThemeManager = loadstring(game:HttpGet(repo .. 'addons/ThemeManager.lua'))()
+local SaveManager = loadstring(game:HttpGet(repo .. 'addons/SaveManager.lua'))()
+
+local Window = Library:CreateWindow({
+    Title = 'serynth.win | ' .. game.Players.LocalPlayer.Name .. ' | ' .. game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name .. ' | $$$',
+    Center = true,
+    AutoShow = true,
+    TabPadding = 8,
+    MenuFadeTime = 0.2
+})
+
+local Tabs = {
+    Main = Window:AddTab('Main'),
+    Settings = Window:AddTab('Settings'),
+    BulletTP = Window:AddTab('Bullet TP'),
+}
+
+local LeftGroupBox = Tabs.Main:AddLeftGroupbox('Rage & ForceHit')
+local RightGroupBox = Tabs.Main:AddRightGroupbox('Speed & Desync')
+local KeybindsGroupBox = Tabs.Main:AddLeftGroupbox('Keybinds')
+local CrosshairGroupBox = Tabs.Main:AddRightGroupbox('Crosshair Settings')
+local BulletTPGroupBox = Tabs.BulletTP:AddLeftGroupbox('Bullet TP Settings')
+
+local Players = game:GetService('Players')
+local UserInput = game:GetService('UserInputService')
+local RunService = game:GetService('RunService')
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local Camera = workspace.CurrentCamera
+local VirtualInputManager = game:GetService('VirtualInputManager')
+local LocalPlayer = Players.LocalPlayer
+local MainEvent = ReplicatedStorage:WaitForChild('MainEvent')
+
+local CurrentTarget = nil
+local VoidEnabled = false
+local ViewEnabled = false
+local OrbitEnabled = false
+local WalkSpeedEnabled = false
+local SuperSpeedEnabled = false
+local UndergroundEnabled = false
+local UndergroundEnabled2 = false
+local VoidBackEnabled = false
+local VoidSpamEnabled = false
+local DesyncEnabled = false
+local LastShot = 0
+local lastReload = {}
+local savedCFrame = nil
+local currentGun = nil
+local shooting = false
+local ForceHitActive = false
+local preFireEnabled = true
+local forcefieldDuration = 3
+local preFireOffset = 0.2
+local hitChamColor = Color3.fromRGB(255, 0, 0)
+local hitChamDuration = 0.5
+local hitHighlights = {}
+local DesyncConnection = nil
+local bulletSpeed = 2000000023444444444444444443244234230000
+local fovFilled = true
+local fovThickness = 2
+local fovTransparency = 0.5
+local crosshairEnabled = true
+local crosshairThickness = 2
+local crosshairSize = 10
+local crosshairColor = Color3.fromRGB(0, 191, 255)
+local crosshairOffsetX = 0
+local crosshairOffsetY = 0
+local bulletTpEnabled = false
+local lastBulletPos = nil
+local bulletTpOffset = Vector3.new(0, 5, 0)
+local worldColorEnabled = false
+local worldColor = Color3.fromRGB(40, 60, 120)
+
+local Circle = Drawing.new('Circle')
+Circle.Thickness = fovThickness
+Circle.Filled = fovFilled
+Circle.Visible = true
+Circle.Transparency = fovTransparency
+Circle.Color = Color3.fromRGB(255, 255, 0)
+Circle.Radius = 300
+
+local ForceTracer = Drawing.new('Line')
+ForceTracer.Thickness = 2
+ForceTracer.Visible = false
+
+local VoidSign = Instance.new('BillboardGui')
+VoidSign.Size = UDim2.new(0, 250, 0, 60)
+VoidSign.AlwaysOnTop = true
+VoidSign.Enabled = false
+VoidSign.Parent = LocalPlayer:WaitForChild('PlayerGui')
+local TextLabel = Instance.new('TextLabel', VoidSign)
+TextLabel.Size = UDim2.new(1, 0, 1, 0)
+TextLabel.BackgroundTransparency = 1
+TextLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+TextLabel.TextStrokeTransparency = 0
+TextLabel.TextScaled = true
+TextLabel.Text = '[âš  VOID ACTIVE âš ]'
+TextLabel.Font = Enum.Font.Code
+
+-- Crosshair GUI Setup
+local CrosshairGui = Instance.new("ScreenGui")
+CrosshairGui.Name = "CrosshairGui"
+CrosshairGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+CrosshairGui.ResetOnSpawn = false
+
+local CrosshairFrameH = Instance.new("Frame")
+CrosshairFrameH.Name = "CrosshairH"
+CrosshairFrameH.Size = UDim2.new(0, crosshairSize * 2, 0, crosshairThickness)
+CrosshairFrameH.Position = UDim2.new(0.5, crosshairOffsetX - crosshairSize, 0.5, crosshairOffsetY)
+CrosshairFrameH.BackgroundColor3 = crosshairColor
+CrosshairFrameH.BorderSizePixel = 0
+CrosshairFrameH.Parent = CrosshairGui
+
+local CrosshairFrameV = Instance.new("Frame")
+CrosshairFrameV.Name = "CrosshairV"
+CrosshairFrameV.Size = UDim2.new(0, crosshairThickness, 0, crosshairSize * 2)
+CrosshairFrameV.Position = UDim2.new(0.5, crosshairOffsetX, 0.5, crosshairOffsetY - crosshairSize)
+CrosshairFrameV.BackgroundColor3 = crosshairColor
+CrosshairFrameV.BorderSizePixel = 0
+CrosshairFrameV.Parent = CrosshairGui
+
+local function UpdateCrosshair()
+    local screenSize = Camera.ViewportSize
+    CrosshairFrameH.Position = UDim2.new(0.5, crosshairOffsetX - crosshairSize, 0.5, crosshairOffsetY)
+    CrosshairFrameH.Size = UDim2.new(0, crosshairSize * 2, 0, crosshairThickness)
+    CrosshairFrameH.BackgroundColor3 = crosshairColor
+    CrosshairFrameH.Visible = crosshairEnabled
+
+    CrosshairFrameV.Position = UDim2.new(0.5, crosshairOffsetX, 0.5, crosshairOffsetY - crosshairSize)
+    CrosshairFrameV.Size = UDim2.new(0, crosshairThickness, 0, crosshairSize * 2)
+    CrosshairFrameV.BackgroundColor3 = crosshairColor
+    CrosshairFrameV.Visible = crosshairEnabled
+end
+
+LeftGroupBox:AddToggle('ForceHitToggle', {
+    Text = 'ForceHit Enabled',
+    Default = false,
+    Tooltip = 'Toggle ForceHit (Aimbot Shooting)',
+    Callback = function(Value)
+        ForceHitActive = Value
+        if not Value then
+            CurrentTarget = nil
+        end
+    end
+})
+
+LeftGroupBox:AddDropdown('FovPositionDropdown', {
+    Values = { 'Cursor', 'Middle' },
+    Default = 1,
+    Multi = false,
+    Text = 'Fov Position',
+    Tooltip = 'Choose Fov position',
+    Callback = function(Value)
+    end
+})
+
+LeftGroupBox:AddSlider('FovSlider', {
+    Text = 'Fov Radius',
+    Default = 300,
+    Min = 50,
+    Max = 1000,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+        Circle.Radius = Value
+    end
+})
+
+LeftGroupBox:AddSlider('FovThicknessSlider', {
+    Text = 'Fov Thickness',
+    Default = 2,
+    Min = 1,
+    Max = 10,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+        fovThickness = Value
+        Circle.Thickness = Value
+    end
+})
+
+LeftGroupBox:AddToggle('FovFilledToggle', {
+    Text = 'Fov Filled',
+    Default = true,
+    Tooltip = 'Toggle filled FOV circle',
+    Callback = function(Value)
+        fovFilled = Value
+        Circle.Filled = Value
+    end
+})
+
+LeftGroupBox:AddSlider('FovTransparencySlider', {
+    Text = 'Fov Transparency',
+    Default = 0.5,
+    Min = 0,
+    Max = 1,
+    Rounding = 2,
+    Compact = false,
+    Callback = function(Value)
+        fovTransparency = Value
+        Circle.Transparency = Value
+    end
+})
+
+LeftGroupBox:AddLabel('Fov Color'):AddColorPicker('FovTracerColorPicker', {
+    Default = Color3.new(1, 1, 0),
+    Title = 'Fov Color',
+    Transparency = nil,
+    Callback = function(Value)
+        Circle.Color = Value
+    end
+})
+
+LeftGroupBox:AddDropdown('HitPartDropdown', {
+    Values = { 'Head', 'UpperTorso', 'HumanoidRootPart' },
+    Default = 1,
+    Multi = false,
+    Text = 'Hit Part',
+    Tooltip = 'Part to aim at',
+    Callback = function(Value)
+    end
+})
+
+LeftGroupBox:AddToggle('PreFireToggle', {
+    Text = 'Pre-Fire Forcefield',
+    Default = true,
+    Tooltip = 'Fire before forcefield ends',
+    Callback = function(Value)
+        preFireEnabled = Value
+    end
+})
+
+LeftGroupBox:AddSlider('ForcefieldDurationSlider', {
+    Text = 'Forcefield Duration (s)',
+    Default = 3,
+    Min = 1,
+    Max = 10,
+    Rounding = 1,
+    Compact = false,
+    Callback = function(Value)
+        forcefieldDuration = Value
+    end
+})
+
+LeftGroupBox:AddSlider('PreFireOffsetSlider', {
+    Text = 'Pre-Fire Offset (s)',
+    Default = 0.2,
+    Min = 0.1,
+    Max = 1,
+    Rounding = 1,
+    Compact = false,
+    Callback = function(Value)
+        preFireOffset = Value
+    end
+})
+
+LeftGroupBox:AddLabel('ESP Cham Color'):AddColorPicker('HitChamColorPicker', {
+    Default = Color3.new(1, 0, 0),
+    Title = 'ESP Cham Color',
+    Transparency = nil,
+    Callback = function(Value)
+        hitChamColor = Value
+    end
+})
+
+LeftGroupBox:AddSlider('HitChamDurationSlider', {
+    Text = 'ESP Cham Duration (s)',
+    Default = 0.5,
+    Min = 0.1,
+    Max = 5,
+    Rounding = 1,
+    Compact = false,
+    Callback = function(Value)
+        hitChamDuration = Value
+    end
+})
+
+RightGroupBox:AddToggle('VoidSpamToggle', {
+    Text = 'Void Spam',
+    Default = false,
+    Tooltip = 'Toggle Void Spam',
+    Callback = function(Value)
+        VoidSpamEnabled = Value
+        if not Value and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild('HumanoidRootPart') and savedCFrame then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = savedCFrame
+            savedCFrame = nil
+        end
+    end
+})
+
+RightGroupBox:AddSlider('VoidSpamYDownSlider', {
+    Text = 'Void Spam Y Down',
+    Default = 69269,
+    Min = 10000,
+    Max = 100000000,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddSlider('VoidSpamWaitTimeSlider', {
+    Text = 'Void Spam Wait Time',
+    Default = 0.2457344322432324343224423,
+    Min = 0.01,
+    Max = 0.5,
+    Rounding = 2,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddToggle('VoidBackToggle', {
+    Text = 'V Desync (Void Back)',
+    Default = false,
+    Tooltip = 'Toggle V Desync',
+    Callback = function(Value)
+        VoidBackEnabled = Value
+    end
+})
+
+RightGroupBox:AddSlider('VoidBackYDownSlider', {
+    Text = 'V Desync Y Down',
+    Default = 69991126,
+    Min = 10000,
+    Max = 100000000,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddSlider('VoidBackWaitTimeSlider', {
+    Text = 'V Desync Wait Time',
+    Default = 0.02456,
+    Min = 0.01,
+    Max = 0.5,
+    Rounding = 2,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddToggle('UndergroundToggle', {
+    Text = 'Underground',
+    Default = false,
+    Tooltip = 'Toggle Underground',
+    Callback = function(Value)
+        UndergroundEnabled = Value
+    end
+})
+
+RightGroupBox:AddSlider('UndergroundYDownSlider', {
+    Text = 'Underground Y Down',
+    Default = -6.5,
+    Min = -20,
+    Max = 0,
+    Rounding = 1,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddToggle('Underground2Toggle', {
+    Text = 'Underground 2',
+    Default = false,
+    Tooltip = 'Toggle Underground 2',
+    Callback = function(Value)
+        UndergroundEnabled2 = Value
+    end
+})
+
+RightGroupBox:AddSlider('Underground2YDownSlider', {
+    Text = 'Underground 2 Y Down',
+    Default = -186,
+    Min = -500,
+    Max = 0,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddSlider('Underground2WaitTimeSlider', {
+    Text = 'Underground 2 Wait Time',
+    Default = 0.02,
+    Min = 0.01,
+    Max = 0.5,
+    Rounding = 2,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddToggle('WalkSpeedToggle', {
+    Text = 'Walk Speed',
+    Default = false,
+    Tooltip = 'Toggle Walk Speed',
+    Callback = function(Value)
+        WalkSpeedEnabled = Value
+        if not Value then
+            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+            if hum then
+                hum.WalkSpeed = 16
+            end
+        end
+    end
+})
+
+RightGroupBox:AddSlider('WalkSpeedValueSlider', {
+    Text = 'Walk Speed Value',
+    Default = 70,
+    Min = 16,
+    Max = 200,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+        if WalkSpeedEnabled then
+            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+            if hum then
+                hum.WalkSpeed = Value
+            end
+        end
+    end
+})
+
+RightGroupBox:AddToggle('SuperSpeedToggle', {
+    Text = 'Super Speed',
+    Default = false,
+    Tooltip = 'Toggle Super Speed',
+    Callback = function(Value)
+        SuperSpeedEnabled = Value
+        if not Value then
+            local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+            if hum then
+                hum.WalkSpeed = 16
+            end
+        end
+    end
+})
+
+RightGroupBox:AddSlider('SuperSpeedValueSlider', {
+    Text = 'Super Speed Value',
+    Default = 100,
+    Min = 50,
+    Max = 500,
+    Rounding = 0,
+    Compact = false,
+    Callback = function(Value)
+    end
+})
+
+RightGroupBox:AddToggle('DesyncToggle', {
+    Text = 'Desync',
+    Default = false,
+    Tooltip = 'Toggle Desync',
+    Callback = function(Value)
+        DesyncEnabled = Value
+        if Value then
+            local char = LocalPlayer.Character
+            if char then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local function setDesyncState(state)
+                        pcall(function()
+                            sethiddenproperty(hrp, "NetworkIsSleeping", state)
+                        end)
+                    end
+                    pcall(function()
+                        setfflag("S2PhysicsSenderRate", "32767")
+                    end)
+                    for _ = 1, 3 do
+                        hrp.AssemblyLinearVelocity += Vector3.new(0, 1, 0)
+                        RunService.Heartbeat:Wait()
+                    end
+                    local step, toggleRate = 0, 2
+                    DesyncConnection = RunService.Heartbeat:Connect(function()
+                        step = (step % toggleRate) + 1
+                        setDesyncState(step % toggleRate ~= 0)
+                    end)
+                    local start = tick()
+                    while tick() - start < 0.5 do end
+                    task.wait(2)
+                    toggleRate = 4
+                end
+            end
+        else
+            if DesyncConnection then
+                DesyncConnection:Disconnect()
+                DesyncConnection = nil
+            end
+            pcall(function()
+                setfflag("S2PhysicsSenderRate", "15")
+            end)
+        end
+    end
+})
+
+RightGroupBox:AddToggle('WorldColorToggle', {
+    Text = 'Change World Color',
+    Default = false,
+    Tooltip = 'Toggle world color change',
+    Callback = function(Value)
+        worldColorEnabled = Value
+    end
+})
+
+RightGroupBox:AddLabel('World Color'):AddColorPicker('WorldColorPicker', {
+    Default = Color3.new(40, 60, 120),
+    Title = 'World Color',
+    Transparency = nil,
+    Callback = function(Value)
+        worldColor = Value
+    end
+})
+
+KeybindsGroupBox:AddLabel('Lock Key'):AddKeyPicker('LockKeyPicker', {
+    Default = 'C',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Lock Target',
+    NoUI = false,
+    Callback = function()
+        local success, result = pcall(GetClosestToMouse)
+        if success then
+            if CurrentTarget and CurrentTarget == result then
+                CurrentTarget = nil
+                ForceHitActive = false
+                Toggles.ForceHitToggle:SetValue(false)
+            else
+                CurrentTarget = result
+                if CurrentTarget then
+                    ForceHitActive = true
+                    Toggles.ForceHitToggle:SetValue(true)
+                end
+            end
+        end
+    end
+})
+
+KeybindsGroupBox:AddLabel('Void Key'):AddKeyPicker('VoidKeyPicker', {
+    Default = 'P',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Void Toggle',
+    NoUI = false,
+    Callback = function()
+        VoidEnabled = not VoidEnabled
+        VoidSign.Enabled = VoidEnabled
+    end
+})
+
+KeybindsGroupBox:AddLabel('Teleport Key'):AddKeyPicker('TeleportKeyPicker', {
+    Default = 'T',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Teleport to Target',
+    NoUI = false,
+    Callback = function()
+        if CurrentTarget then
+            local char = LocalPlayer.Character
+            local hrp = char and char:FindFirstChild('HumanoidRootPart')
+            local targetHrp = GetTargetPart()
+            if hrp and targetHrp then
+                hrp.CFrame = targetHrp.CFrame + Vector3.new(0, 5, 0)
+            end
+        end
+    end
+})
+
+KeybindsGroupBox:AddLabel('View Key'):AddKeyPicker('ViewKeyPicker', {
+    Default = 'J',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'View Target',
+    NoUI = false,
+    Callback = function()
+        ViewEnabled = not ViewEnabled
+        if not ViewEnabled and LocalPlayer.Character then
+            Camera.CameraSubject = LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+        end
+    end
+})
+
+KeybindsGroupBox:AddLabel('Orbit Key'):AddKeyPicker('OrbitKeyPicker', {
+    Default = 'Y',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Orbit Target',
+    NoUI = false,
+    Callback = function()
+        OrbitEnabled = not OrbitEnabled
+    end
+})
+
+KeybindsGroupBox:AddLabel('WalkSpeed Key'):AddKeyPicker('WalkSpeedKeyPicker', {
+    Default = 'Z',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Walk Speed Toggle',
+    NoUI = false,
+    Callback = function()
+        WalkSpeedEnabled = not WalkSpeedEnabled
+        SuperSpeedEnabled = false
+        Toggles.WalkSpeedToggle:SetValue(WalkSpeedEnabled)
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+        if hum then
+            hum.WalkSpeed = WalkSpeedEnabled and Options.WalkSpeedValueSlider.Value or 16
+        end
+    end
+})
+
+KeybindsGroupBox:AddLabel('SuperSpeed Key'):AddKeyPicker('SuperSpeedKeyPicker', {
+    Default = 'X',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Super Speed Toggle',
+    NoUI = false,
+    Callback = function()
+        SuperSpeedEnabled = not SuperSpeedEnabled
+        WalkSpeedEnabled = false
+        Toggles.SuperSpeedToggle:SetValue(SuperSpeedEnabled)
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass('Humanoid')
+        if hum then
+            hum.WalkSpeed = 16
+        end
+    end
+})
+
+KeybindsGroupBox:AddLabel('Underground Key'):AddKeyPicker('UndergroundKeyPicker', {
+    Default = 'F',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Underground Toggle',
+    NoUI = false,
+    Callback = function()
+        UndergroundEnabled = not UndergroundEnabled
+        Toggles.UndergroundToggle:SetValue(UndergroundEnabled)
+    end
+})
+
+KeybindsGroupBox:AddLabel('Underground2 Key'):AddKeyPicker('Underground2KeyPicker', {
+    Default = 'K',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Underground2 Toggle',
+    NoUI = false,
+    Callback = function()
+        UndergroundEnabled2 = not UndergroundEnabled2
+        Toggles.Underground2Toggle:SetValue(UndergroundEnabled2)
+    end
+})
+
+KeybindsGroupBox:AddLabel('VoidBack Key'):AddKeyPicker('VoidBackKeyPicker', {
+    Default = 'V',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Void Back Toggle',
+    NoUI = false,
+    Callback = function()
+        VoidBackEnabled = not VoidBackEnabled
+        Toggles.VoidBackToggle:SetValue(VoidBackEnabled)
+    end
+})
+
+KeybindsGroupBox:AddLabel('Desync Key'):AddKeyPicker('DesyncKeyPicker', {
+    Default = 'N',
+    SyncToggleState = false,
+    Mode = 'Toggle',
+    Text = 'Desync Toggle',
+    NoUI = false,
+    Callback = function()
+        DesyncEnabled = not DesyncEnabled
+        Toggles.DesyncToggle:SetValue(DesyncEnabled)
+        if DesyncEnabled then
+            local char = LocalPlayer.Character
+            if char then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local function setDesyncState(state)
+                        pcall(function()
+                            sethiddenproperty(hrp, "NetworkIsSleeping", state)
+                        end)
+                    end
+                    pcall(function()
+                        setfflag("S2PhysicsSenderRate", "32767")
+                    end)
+                    for _ = 1, 3 do
+                        hrp.Assembly
